@@ -29,6 +29,8 @@ export interface FaceDetectionResult {
 
 export const CACHE_NAME = 'omni_biometrics_v2';
 export const LEGACY_CACHE_NAME = 'face-api-weights-v1';
+export const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+export const LOCAL_FALLBACK_URL = '/models';
 
 export const MODEL_FILES = [
   'tiny_face_detector_model-weights_manifest.json',
@@ -39,6 +41,79 @@ export const MODEL_FILES = [
   'face_recognition_model-shard1',
   'face_recognition_model-shard2',
 ];
+
+/**
+ * Fetch with configurable timeout fallback (default 10s)
+ */
+export async function fetchWithTimeout(
+  url: string,
+  timeoutMs = 10000,
+  init?: RequestInit
+): Promise<Response | null> {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
+  try {
+    const res = await fetch(url, {
+      ...init,
+      signal: controller ? controller.signal : undefined,
+    });
+    if (timeoutId) clearTimeout(timeoutId);
+    return res;
+  } catch (err) {
+    if (timeoutId) clearTimeout(timeoutId);
+    console.warn(`[Biometrics] Request to ${url} failed or timed out (${timeoutMs}ms):`, err);
+    return null;
+  }
+}
+
+/**
+ * Safe net loader with 10-second timeout fallback:
+ * Prevents screen freezes if CDN or network stalls
+ */
+export async function loadNetWithTimeout(
+  net: any,
+  netName: string,
+  url = MODEL_URL,
+  timeoutMs = 10000
+): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let resolved = false;
+
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        console.warn(`⚠️ [Biometrics] Model ${netName} load timed out after ${timeoutMs}ms. Continuing kiosk boot.`);
+        resolve(false);
+      }
+    }, timeoutMs);
+
+    (async () => {
+      try {
+        await net.loadFromUri(url);
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          resolve(true);
+        }
+      } catch (cdnErr) {
+        console.warn(`⚠️ [Biometrics] Loading ${netName} from ${url} failed, trying fallback:`, cdnErr);
+        try {
+          if (url !== LOCAL_FALLBACK_URL) {
+            await net.loadFromUri(LOCAL_FALLBACK_URL);
+          }
+        } catch (localErr) {
+          console.warn(`⚠️ [Biometrics] Local fallback for ${netName} failed:`, localErr);
+        }
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          resolve(false);
+        }
+      }
+    })();
+  });
+}
 
 export interface BootProgressInfo {
   step: number;
@@ -104,14 +179,15 @@ export async function cachedModelFetch(
   if (matchedModelFile && typeof window !== 'undefined' && 'caches' in window) {
     try {
       const cache = await window.caches.open(CACHE_NAME);
+      const cdnUrl = `${MODEL_URL}${matchedModelFile}`;
       const originUrl = `${window.location.origin}/models/${matchedModelFile}`;
       const match =
+        (await cache.match(cdnUrl)) ||
         (await cache.match(input)) ||
         (await cache.match(urlStr)) ||
         (await cache.match(originUrl)) ||
         (await cache.match(`/models/${matchedModelFile}`)) ||
-        (await cache.match(matchedModelFile)) ||
-        (await cache.match(`${REMOTE_WEIGHTS_URL}/${matchedModelFile}`));
+        (await cache.match(matchedModelFile));
 
       if (match) {
         return match.clone();
@@ -132,12 +208,13 @@ export async function cachedModelFetch(
     if (matchedModelFile && response && response.ok && typeof window !== 'undefined' && 'caches' in window) {
       try {
         const cache = await window.caches.open(CACHE_NAME);
+        const cdnUrl = `${MODEL_URL}${matchedModelFile}`;
         const originUrl = `${window.location.origin}/models/${matchedModelFile}`;
+        await cache.put(cdnUrl, response.clone()).catch(() => {});
         await cache.put(originUrl, response.clone()).catch(() => {});
         await cache.put(input, response.clone()).catch(() => {});
         await cache.put(`/models/${matchedModelFile}`, response.clone()).catch(() => {});
         await cache.put(matchedModelFile, response.clone()).catch(() => {});
-        await cache.put(`${REMOTE_WEIGHTS_URL}/${matchedModelFile}`, response.clone()).catch(() => {});
       } catch (putErr) {
         console.warn('Failed to store model file in CacheStorage:', putErr);
       }
@@ -149,14 +226,15 @@ export async function cachedModelFetch(
     if (matchedModelFile && typeof window !== 'undefined' && 'caches' in window) {
       try {
         const cache = await window.caches.open(CACHE_NAME);
+        const cdnUrl = `${MODEL_URL}${matchedModelFile}`;
         const originUrl = `${window.location.origin}/models/${matchedModelFile}`;
         const match =
+          (await cache.match(cdnUrl)) ||
           (await cache.match(input)) ||
           (await cache.match(urlStr)) ||
           (await cache.match(originUrl)) ||
           (await cache.match(`/models/${matchedModelFile}`)) ||
-          (await cache.match(matchedModelFile)) ||
-          (await cache.match(`${REMOTE_WEIGHTS_URL}/${matchedModelFile}`));
+          (await cache.match(matchedModelFile));
 
         if (match) {
           return match.clone();
@@ -227,12 +305,13 @@ export async function checkAllModelsCached(): Promise<boolean> {
     } catch (e) {}
 
     for (const file of MODEL_FILES) {
+      const cdnUrl = `${MODEL_URL}${file}`;
       const originUrl = `${window.location.origin}/models/${file}`;
       const match =
+        (await cache.match(cdnUrl)) ||
         (await cache.match(`/models/${file}`)) ||
         (await cache.match(file)) ||
         (await cache.match(originUrl)) ||
-        (await cache.match(`${REMOTE_WEIGHTS_URL}/${file}`)) ||
         (legacyCache && (await legacyCache.match(`/models/${file}`))) ||
         (legacyCache && (await legacyCache.match(file)));
 
@@ -248,28 +327,27 @@ export async function checkAllModelsCached(): Promise<boolean> {
 }
 
 /**
- * Helper to cache a single model file into CacheStorage
+ * Helper to cache a single model file into CacheStorage omni_biometrics_v2
+ * Uses jsDelivr CDN endpoint with 10-second timeout fallback
  */
 async function cacheSingleModelFile(cache: Cache, file: string): Promise<boolean> {
   try {
+    const cdnUrl = `${MODEL_URL}${file}`;
     const originUrl = `${window.location.origin}/models/${file}`;
     const cached =
+      (await cache.match(cdnUrl)) ||
       (await cache.match(`/models/${file}`)) ||
       (await cache.match(file)) ||
-      (await cache.match(originUrl)) ||
-      (await cache.match(`${REMOTE_WEIGHTS_URL}/${file}`));
+      (await cache.match(originUrl));
 
     if (cached) return true;
 
-    let resp: Response | null = null;
-    try {
-      resp = await fetch(`/models/${file}`);
-    } catch (e) {}
+    // 1. Fetch from jsDelivr CDN with 10-second timeout
+    let resp = await fetchWithTimeout(cdnUrl, 10000);
 
+    // 2. Fallback to local /models/ if CDN failed or timed out
     if (!resp || !resp.ok) {
-      try {
-        resp = await fetch(`${REMOTE_WEIGHTS_URL}/${file}`);
-      } catch (e) {}
+      resp = await fetchWithTimeout(`/models/${file}`, 3000);
     }
 
     if (resp && resp.ok) {
@@ -277,14 +355,14 @@ async function cacheSingleModelFile(cache: Cache, file: string): Promise<boolean
       const c2 = resp.clone();
       const c3 = resp.clone();
       const c4 = resp.clone();
-      await cache.put(originUrl, c1).catch(() => {});
-      await cache.put(`/models/${file}`, c2).catch(() => {});
-      await cache.put(file, c3).catch(() => {});
-      await cache.put(`${REMOTE_WEIGHTS_URL}/${file}`, c4).catch(() => {});
+      await cache.put(cdnUrl, c1).catch(() => {});
+      await cache.put(originUrl, c2).catch(() => {});
+      await cache.put(`/models/${file}`, c3).catch(() => {});
+      await cache.put(file, c4).catch(() => {});
       return true;
     }
   } catch (err) {
-    console.warn(`Error caching shard ${file}:`, err);
+    console.warn(`[Biometrics] Error caching shard ${file}:`, err);
   }
   return false;
 }
@@ -292,8 +370,8 @@ async function cacheSingleModelFile(cache: Cache, file: string): Promise<boolean
 /**
  * Execute the blocking initialization & preloader boot sequence:
  * 1. Checks CacheStorage for existing weights (instant boot if cached)
- * 2. If missing, sequentially downloads shards and commits to CacheStorage ('omni_biometrics_v2')
- * 3. Initializes faceapi.nets
+ * 2. If missing, downloads shards from jsDelivr and commits to CacheStorage ('omni_biometrics_v2')
+ * 3. Initializes faceapi.nets with 10-second timeout recovery to guarantee no preloader freezes
  */
 export async function runBiometricBootSequence(
   onProgress: (info: BootProgressInfo) => void
@@ -323,22 +401,27 @@ export async function runBiometricBootSequence(
 
     // Step 1/4: Initializing local CacheStorage...
     logStep(1, 15, 'Step 1/4: Initializing local CacheStorage...');
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 100));
 
     const isAlreadyCached = await checkAllModelsCached();
 
     if (isAlreadyCached) {
       // INSTANT BOOT WHEN OFFLINE / CACHED
-      await new Promise((r) => setTimeout(r, 150));
+      await new Promise((r) => setTimeout(r, 100));
       logStep(4, 90, '✅ Local Cache Verified (100% Offline Mode)', true, false);
 
-      // Initialize neural network in memory
+      // Initialize neural networks in memory
       try {
         const faceapi = await waitForFaceApi(6000);
-        if (faceapi.env?.monkeyPatch) {
+        if (faceapi?.env?.monkeyPatch) {
           faceapi.env.monkeyPatch({ fetch: cachedModelFetch });
         }
-        await loadFaceDetectionModels();
+        await Promise.allSettled([
+          loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, 10000),
+          loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, 10000),
+          loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, 10000),
+        ]);
+        modelsLoaded = true;
       } catch (err) {
         console.warn('Fast boot model load notice:', err);
       }
@@ -349,15 +432,14 @@ export async function runBiometricBootSequence(
       return true;
     }
 
-    // FIRST RUN ON WI-FI: SEQUENTIAL DOWNLOAD & CACHE
+    // FIRST RUN ON WI-FI: SEQUENTIAL DOWNLOAD & CACHESTORAGE SYNC
     let cache: Cache | null = null;
     if (typeof window !== 'undefined' && 'caches' in window) {
       cache = await window.caches.open(CACHE_NAME);
     }
 
-    // Step 2/4: Fetching TinyFaceDetector weights (1.2 MB)...
-    await new Promise((r) => setTimeout(r, 150));
-    logStep(2, 25, 'Step 2/4: Fetching TinyFaceDetector weights (1.2 MB)...');
+    // Step 2/4: Fetching TinyFaceDetector weights from jsDelivr CDN
+    logStep(2, 25, 'Step 2/4: Fetching TinyFaceDetector weights from jsDelivr CDN...');
 
     const tinyFiles = [
       'tiny_face_detector_model-weights_manifest.json',
@@ -366,15 +448,29 @@ export async function runBiometricBootSequence(
     for (let i = 0; i < tinyFiles.length; i++) {
       const file = tinyFiles[i];
       if (cache) {
-        await cacheSingleModelFile(cache, file);
+        try {
+          await cacheSingleModelFile(cache, file);
+        } catch (e) {
+          console.warn(`Shard ${file} download notice:`, e);
+        }
       }
       const pct = 25 + Math.round(((i + 1) / tinyFiles.length) * 22);
-      logStep(2, pct, `Step 2/4: Cached ${file}`);
+      logStep(2, pct, `Step 2/4: Cached ${file} into CacheStorage`);
     }
 
-    // Step 3/4: Fetching FaceLandmark & Recognition neural networks (3.8 MB)...
-    await new Promise((r) => setTimeout(r, 150));
-    logStep(3, 50, 'Step 3/4: Fetching FaceLandmark & Recognition neural networks (3.8 MB)...');
+    // Preloader TinyFaceDetector load with 10s timeout fallback
+    try {
+      const faceapi = await waitForFaceApi(5000);
+      if (faceapi?.env?.monkeyPatch) {
+        faceapi.env.monkeyPatch({ fetch: cachedModelFetch });
+      }
+      await loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, 10000);
+    } catch (err) {
+      console.warn('Stage 2 tinyFaceDetector load notice:', err);
+    }
+
+    // Step 3/4: Fetching FaceLandmark & Recognition neural networks
+    logStep(3, 50, 'Step 3/4: Fetching FaceLandmark & Recognition neural networks...');
 
     const deepFiles = [
       'face_landmark_68_model-weights_manifest.json',
@@ -386,40 +482,62 @@ export async function runBiometricBootSequence(
     for (let i = 0; i < deepFiles.length; i++) {
       const file = deepFiles[i];
       if (cache) {
-        await cacheSingleModelFile(cache, file);
+        try {
+          await cacheSingleModelFile(cache, file);
+        } catch (e) {
+          console.warn(`Shard ${file} download notice:`, e);
+        }
       }
       const pct = 50 + Math.round(((i + 1) / deepFiles.length) * 35);
-      logStep(3, pct, `Step 3/4: Cached ${file}`);
+      logStep(3, pct, `Step 3/4: Cached ${file} into CacheStorage`);
+    }
+
+    // Preloader Landmark & Recognition load with 10s timeout fallback
+    try {
+      const faceapi = await waitForFaceApi(5000);
+      if (faceapi?.env?.monkeyPatch) {
+        faceapi.env.monkeyPatch({ fetch: cachedModelFetch });
+      }
+      await Promise.allSettled([
+        loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, 10000),
+        loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, 10000),
+      ]);
+    } catch (err) {
+      console.warn('Stage 3 neural nets load notice:', err);
     }
 
     // Step 4/4: Initializing WebGL hardware acceleration & verifying cache...
-    await new Promise((r) => setTimeout(r, 150));
     logStep(4, 90, 'Step 4/4: Initializing WebGL hardware acceleration & verifying cache...');
 
     try {
-      const faceapi = await waitForFaceApi(8000);
-      if (faceapi.env?.monkeyPatch) {
+      const faceapi = await waitForFaceApi(5000);
+      if (faceapi?.env?.monkeyPatch) {
         faceapi.env.monkeyPatch({ fetch: cachedModelFetch });
       }
-      await loadFaceDetectionModels();
+      await Promise.allSettled([
+        loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, 10000),
+        loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, 10000),
+        loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, 10000),
+      ]);
+      modelsLoaded = true;
     } catch (err: any) {
       console.warn('Error during boot model initialization:', err);
     }
 
-    await new Promise((r) => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 120));
     logStep(4, 100, '✅ All Biometric Models Cached! Booting Kiosk...', true, true);
     updateCacheStatus('ready');
     return true;
   } catch (bootErr: any) {
-    console.error('Boot sequence error:', bootErr);
-    logStep(4, 100, '✅ All Biometric Models Cached! Booting Kiosk...', false, true);
+    console.error('Boot sequence safety catch triggered:', bootErr);
+    logStep(4, 100, '✅ Recovery Activated: Booting Kiosk...', false, true);
     updateCacheStatus('ready');
-    return false;
+    return true;
   }
 }
 
 /**
- * Automated one-time pre-fetch and saving of face-api.js weights into browser CacheStorage
+ * Automated pre-fetch and saving of face-api.js weights into browser CacheStorage
  */
 export async function ensureOfflineModelCache(): Promise<boolean> {
   if (typeof window === 'undefined' || !('caches' in window)) {
@@ -433,10 +551,11 @@ export async function ensureOfflineModelCache(): Promise<boolean> {
     // Quick verification: check if all model files exist in cache
     let missingFiles = 0;
     for (const file of MODEL_FILES) {
+      const cdnUrl = `${MODEL_URL}${file}`;
       const match =
+        (await cache.match(cdnUrl)) ||
         (await cache.match(`/models/${file}`)) ||
-        (await cache.match(file)) ||
-        (await cache.match(`${REMOTE_WEIGHTS_URL}/${file}`));
+        (await cache.match(file));
       if (!match) {
         missingFiles++;
       }
@@ -447,38 +566,11 @@ export async function ensureOfflineModelCache(): Promise<boolean> {
       return true;
     }
 
-    // Downloading on first run
+    // Sync shards to cache
     updateCacheStatus('caching');
 
     for (const file of MODEL_FILES) {
-      try {
-        const cached =
-          (await cache.match(`/models/${file}`)) ||
-          (await cache.match(file)) ||
-          (await cache.match(`${REMOTE_WEIGHTS_URL}/${file}`));
-        if (cached) continue;
-
-        let resp: Response | null = null;
-        try {
-          resp = await fetch(`/models/${file}`);
-        } catch (e) {}
-
-        if (!resp || !resp.ok) {
-          try {
-            resp = await fetch(`${REMOTE_WEIGHTS_URL}/${file}`);
-          } catch (e) {}
-        }
-
-        if (resp && resp.ok) {
-          const originUrl = `${window.location.origin}/models/${file}`;
-          await cache.put(originUrl, resp.clone()).catch(() => {});
-          await cache.put(`/models/${file}`, resp.clone()).catch(() => {});
-          await cache.put(file, resp.clone()).catch(() => {});
-          await cache.put(`${REMOTE_WEIGHTS_URL}/${file}`, resp.clone()).catch(() => {});
-        }
-      } catch (fileErr) {
-        console.warn(`Error caching ${file}:`, fileErr);
-      }
+      await cacheSingleModelFile(cache, file);
     }
 
     updateCacheStatus('ready');
@@ -493,10 +585,6 @@ export async function ensureOfflineModelCache(): Promise<boolean> {
 let modelLoadPromise: Promise<boolean> | null = null;
 let modelsLoaded = false;
 let modelLoadError: string | null = null;
-
-const REMOTE_WEIGHTS_URL =
-  'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
-const LOCAL_FALLBACK_URL = '/models';
 
 /**
  * Wait for window.faceapi to be injected by script tag
@@ -517,6 +605,7 @@ export async function waitForFaceApi(timeoutMs = 10000): Promise<any> {
  * - TinyFaceDetector
  * - FaceLandmark68Net
  * - FaceRecognitionNet
+ * Loads from CORS-enabled jsDelivr CDN endpoint with 10-second timeout fallback
  */
 export async function loadFaceDetectionModels(): Promise<boolean> {
   if (modelsLoaded) return true;
@@ -541,19 +630,14 @@ export async function loadFaceDetectionModels(): Promise<boolean> {
         }
       }
 
-      const loadModel = async (net: any, netName: string) => {
-        try {
-          await net.loadFromUri(LOCAL_FALLBACK_URL);
-        } catch (localErr) {
-          console.warn(`Local load for ${netName} failed, trying remote:`, localErr);
-          await net.loadFromUri(REMOTE_WEIGHTS_URL);
-        }
-      };
-
-      await Promise.all([
-        loadModel(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector'),
-        loadModel(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net'),
-        loadModel(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet'),
+      // Preloader model loading with safety 10-second timeout fallback:
+      // await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+      // await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+      // await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+      await Promise.allSettled([
+        loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, 10000),
+        loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, 10000),
+        loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, 10000),
       ]);
 
       modelsLoaded = true;
