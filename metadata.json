@@ -1,0 +1,8 @@
+{
+  "name": "OmniRoster — Universal Offline Duty Roster & PIN Attendance Kiosk",
+  "description": "Enterprise-grade, multi-tenant duty scheduling and attendance verification kiosk. 100% offline-first with localStorage.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
