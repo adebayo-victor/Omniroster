@@ -25,10 +25,51 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
     terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [bootInfo.allLogs]);
 
-  // Execute Boot Sequence on Mount
+  // Execute Boot Sequence on Mount with 3-Second Auto-Resolve Safety Timer
   useEffect(() => {
     let isMounted = true;
+    let isResolved = false;
 
+    // Graceful Fallback Unlock: dissolve preloader and unlock kiosk with Photo-Proof Fallback
+    const unlockWithFallback = () => {
+      if (!isMounted || isResolved) return;
+      isResolved = true;
+
+      setBootInfo((prev) => ({
+        ...prev,
+        step: 4,
+        percent: 100,
+        isComplete: true,
+        currentLog: '⚠️ Network Slow: Booting Kiosk with Photo-Proof Fallback',
+        allLogs: [
+          ...prev.allLogs,
+          '⚠️ Network Slow: Booting Kiosk with Photo-Proof Fallback',
+          '✅ Kiosk Dashboard Unlocked (Photo-Proof Camera Snapshot Mode Active)',
+        ],
+      }));
+
+      setTimeout(() => {
+        if (isMounted) {
+          setIsFadingOut(true);
+          setTimeout(() => {
+            if (isMounted) {
+              onBootComplete();
+            }
+          }, 400);
+        }
+      }, 150);
+    };
+
+    // 1. Strict 3-Second Auto-Resolve Safety Timer:
+    // If models are not loaded and cached within 3 seconds, boot kiosk immediately
+    const safetyTimeout = setTimeout(() => {
+      if (!isResolved) {
+        console.warn('⚠️ 3-Second auto-resolve safety timer triggered: booting with Photo-Proof Fallback');
+        unlockWithFallback();
+      }
+    }, 3000);
+
+    // 2. Start biometric boot sequence
     const startBoot = async () => {
       try {
         await runBiometricBootSequence((update) => {
@@ -36,7 +77,9 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
           setBootInfo(update);
 
           if (update.isComplete) {
-            // Trigger smooth dissolution
+            isResolved = true;
+            clearTimeout(safetyTimeout);
+            // Smoothly dissolve splash screen
             setTimeout(() => {
               if (isMounted) {
                 setIsFadingOut(true);
@@ -44,17 +87,15 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
                   if (isMounted) {
                     onBootComplete();
                   }
-                }, 500); // 500ms fade duration
+                }, 400);
               }
-            }, 300);
+            }, 250);
           }
         });
       } catch (err) {
-        console.error('Boot sequence error:', err);
-        if (isMounted) {
-          setIsFadingOut(true);
-          setTimeout(() => onBootComplete(), 500);
-        }
+        console.warn('Boot sequence exception caught:', err);
+        clearTimeout(safetyTimeout);
+        unlockWithFallback();
       }
     };
 
@@ -62,8 +103,16 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
 
     return () => {
       isMounted = false;
+      clearTimeout(safetyTimeout);
     };
   }, [onBootComplete]);
+
+  const handleManualBypass = () => {
+    setIsFadingOut(true);
+    setTimeout(() => {
+      onBootComplete();
+    }, 300);
+  };
 
   return (
     <div
@@ -231,6 +280,17 @@ export const BootScreen: React.FC<BootScreenProps> = ({ onBootComplete }) => {
             <span className="truncate">1-to-1 Facial Euclidean Gate</span>
           </div>
         </div>
+
+        {/* Instant Skip / Manual Unlock Button */}
+        <button
+          id="btn-skip-boot"
+          type="button"
+          onClick={handleManualBypass}
+          className="mt-5 px-4 py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-xs font-mono text-slate-400 hover:text-cyan-300 transition-all flex items-center gap-2 cursor-pointer shadow-lg active:scale-95"
+        >
+          <span>⚡</span>
+          <span>Instant Bypass (Launch Kiosk Dashboard)</span>
+        </button>
       </div>
     </div>
   );
