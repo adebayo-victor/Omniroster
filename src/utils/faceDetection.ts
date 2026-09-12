@@ -43,11 +43,16 @@ export const MODEL_FILES = [
 ];
 
 /**
- * Fetch with configurable timeout fallback (default 10s)
+ * 5-minute extended timeout window (300,000 ms) for all network / API requests
+ */
+export const API_TIMEOUT_MS = 5 * 60 * 1000; // 300,000 ms (5 minutes)
+
+/**
+ * Fetch with configurable timeout fallback (default 5 minutes / 300,000 ms)
  */
 export async function fetchWithTimeout(
   url: string,
-  timeoutMs = 10000,
+  timeoutMs = API_TIMEOUT_MS,
   init?: RequestInit
 ): Promise<Response | null> {
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -68,14 +73,14 @@ export async function fetchWithTimeout(
 }
 
 /**
- * Safe net loader with 10-second timeout fallback:
- * Prevents screen freezes if CDN or network stalls
+ * Safe net loader with 5-minute timeout fallback (300,000 ms):
+ * Prevents premature abort on slow networks while ensuring kiosks never freeze
  */
 export async function loadNetWithTimeout(
   net: any,
   netName: string,
   url = MODEL_URL,
-  timeoutMs = 10000
+  timeoutMs = API_TIMEOUT_MS
 ): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     let resolved = false;
@@ -328,12 +333,13 @@ export async function checkAllModelsCached(): Promise<boolean> {
 
 /**
  * Helper to cache a single model file into CacheStorage omni_biometrics_v2
- * Uses jsDelivr CDN endpoint with 10-second timeout fallback
+ * Uses jsDelivr CDN endpoint with 5-minute timeout window and 3x auto-retry
  */
-async function cacheSingleModelFile(cache: Cache, file: string): Promise<boolean> {
+async function cacheSingleModelFile(cache: Cache, file: string, maxRetries = 3): Promise<boolean> {
+  const cdnUrl = `${MODEL_URL}${file}`;
+  const originUrl = `${window.location.origin}/models/${file}`;
+
   try {
-    const cdnUrl = `${MODEL_URL}${file}`;
-    const originUrl = `${window.location.origin}/models/${file}`;
     const cached =
       (await cache.match(cdnUrl)) ||
       (await cache.match(`/models/${file}`)) ||
@@ -342,24 +348,35 @@ async function cacheSingleModelFile(cache: Cache, file: string): Promise<boolean
 
     if (cached) return true;
 
-    // 1. Fetch from jsDelivr CDN with 10-second timeout
-    let resp = await fetchWithTimeout(cdnUrl, 10000);
+    // Retry loop with 5-minute timeout window
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // 1. Fetch from jsDelivr CDN with 5-minute timeout (300,000 ms)
+        let resp = await fetchWithTimeout(cdnUrl, API_TIMEOUT_MS);
 
-    // 2. Fallback to local /models/ if CDN failed or timed out
-    if (!resp || !resp.ok) {
-      resp = await fetchWithTimeout(`/models/${file}`, 3000);
-    }
+        // 2. Fallback to local /models/ if CDN failed or timed out
+        if (!resp || !resp.ok) {
+          resp = await fetchWithTimeout(`/models/${file}`, API_TIMEOUT_MS);
+        }
 
-    if (resp && resp.ok) {
-      const c1 = resp.clone();
-      const c2 = resp.clone();
-      const c3 = resp.clone();
-      const c4 = resp.clone();
-      await cache.put(cdnUrl, c1).catch(() => {});
-      await cache.put(originUrl, c2).catch(() => {});
-      await cache.put(`/models/${file}`, c3).catch(() => {});
-      await cache.put(file, c4).catch(() => {});
-      return true;
+        if (resp && resp.ok) {
+          const c1 = resp.clone();
+          const c2 = resp.clone();
+          const c3 = resp.clone();
+          const c4 = resp.clone();
+          await cache.put(cdnUrl, c1).catch(() => {});
+          await cache.put(originUrl, c2).catch(() => {});
+          await cache.put(`/models/${file}`, c3).catch(() => {});
+          await cache.put(file, c4).catch(() => {});
+          return true;
+        }
+      } catch (retryErr) {
+        console.warn(`[Biometrics] Shard ${file} fetch attempt ${attempt}/${maxRetries} failed:`, retryErr);
+      }
+
+      if (attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
+      }
     }
   } catch (err) {
     console.warn(`[Biometrics] Error caching shard ${file}:`, err);
@@ -412,14 +429,14 @@ export async function runBiometricBootSequence(
 
       // Initialize neural networks in memory
       try {
-        const faceapi = await waitForFaceApi(6000);
+        const faceapi = await waitForFaceApi(API_TIMEOUT_MS);
         if (faceapi?.env?.monkeyPatch) {
           faceapi.env.monkeyPatch({ fetch: cachedModelFetch });
         }
         await Promise.allSettled([
-          loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, 10000),
-          loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, 10000),
-          loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, 10000),
+          loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, API_TIMEOUT_MS),
+          loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, API_TIMEOUT_MS),
+          loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, API_TIMEOUT_MS),
         ]);
         modelsLoaded = true;
       } catch (err) {
@@ -458,13 +475,13 @@ export async function runBiometricBootSequence(
       logStep(2, pct, `Step 2/4: Cached ${file} into CacheStorage`);
     }
 
-    // Preloader TinyFaceDetector load with 10s timeout fallback
+    // Preloader TinyFaceDetector load with 5-minute timeout fallback
     try {
-      const faceapi = await waitForFaceApi(5000);
+      const faceapi = await waitForFaceApi(API_TIMEOUT_MS);
       if (faceapi?.env?.monkeyPatch) {
         faceapi.env.monkeyPatch({ fetch: cachedModelFetch });
       }
-      await loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, 10000);
+      await loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, API_TIMEOUT_MS);
     } catch (err) {
       console.warn('Stage 2 tinyFaceDetector load notice:', err);
     }
@@ -492,15 +509,15 @@ export async function runBiometricBootSequence(
       logStep(3, pct, `Step 3/4: Cached ${file} into CacheStorage`);
     }
 
-    // Preloader Landmark & Recognition load with 10s timeout fallback
+    // Preloader Landmark & Recognition load with 5-minute timeout fallback
     try {
-      const faceapi = await waitForFaceApi(5000);
+      const faceapi = await waitForFaceApi(API_TIMEOUT_MS);
       if (faceapi?.env?.monkeyPatch) {
         faceapi.env.monkeyPatch({ fetch: cachedModelFetch });
       }
       await Promise.allSettled([
-        loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, 10000),
-        loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, 10000),
+        loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, API_TIMEOUT_MS),
+        loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, API_TIMEOUT_MS),
       ]);
     } catch (err) {
       console.warn('Stage 3 neural nets load notice:', err);
@@ -510,14 +527,14 @@ export async function runBiometricBootSequence(
     logStep(4, 90, 'Step 4/4: Initializing WebGL hardware acceleration & verifying cache...');
 
     try {
-      const faceapi = await waitForFaceApi(5000);
+      const faceapi = await waitForFaceApi(API_TIMEOUT_MS);
       if (faceapi?.env?.monkeyPatch) {
         faceapi.env.monkeyPatch({ fetch: cachedModelFetch });
       }
       await Promise.allSettled([
-        loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, 10000),
-        loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, 10000),
-        loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, 10000),
+        loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, API_TIMEOUT_MS),
+        loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, API_TIMEOUT_MS),
+        loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, API_TIMEOUT_MS),
       ]);
       modelsLoaded = true;
     } catch (err: any) {
@@ -587,9 +604,9 @@ let modelsLoaded = false;
 let modelLoadError: string | null = null;
 
 /**
- * Wait for window.faceapi to be injected by script tag
+ * Wait for window.faceapi to be injected by script tag with 5-minute timeout window
  */
-export async function waitForFaceApi(timeoutMs = 10000): Promise<any> {
+export async function waitForFaceApi(timeoutMs = API_TIMEOUT_MS): Promise<any> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (typeof window !== 'undefined' && window.faceapi) {
@@ -605,7 +622,7 @@ export async function waitForFaceApi(timeoutMs = 10000): Promise<any> {
  * - TinyFaceDetector
  * - FaceLandmark68Net
  * - FaceRecognitionNet
- * Loads from CORS-enabled jsDelivr CDN endpoint with 10-second timeout fallback
+ * Loads from CORS-enabled jsDelivr CDN endpoint with 5-minute timeout fallback
  */
 export async function loadFaceDetectionModels(): Promise<boolean> {
   if (modelsLoaded) return true;
@@ -617,7 +634,7 @@ export async function loadFaceDetectionModels(): Promise<boolean> {
       // Ensure model files are pre-cached into CacheStorage
       await ensureOfflineModelCache().catch((e) => console.warn('Offline caching background error:', e));
 
-      const faceapi = await waitForFaceApi();
+      const faceapi = await waitForFaceApi(API_TIMEOUT_MS);
       if (!faceapi) {
         throw new Error('faceapi global object unavailable');
       }
@@ -630,14 +647,11 @@ export async function loadFaceDetectionModels(): Promise<boolean> {
         }
       }
 
-      // Preloader model loading with safety 10-second timeout fallback:
-      // await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
-      // await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
-      // await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+      // Preloader model loading with safety 5-minute timeout fallback
       await Promise.allSettled([
-        loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, 10000),
-        loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, 10000),
-        loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, 10000),
+        loadNetWithTimeout(faceapi.nets.tinyFaceDetector, 'tinyFaceDetector', MODEL_URL, API_TIMEOUT_MS),
+        loadNetWithTimeout(faceapi.nets.faceLandmark68Net, 'faceLandmark68Net', MODEL_URL, API_TIMEOUT_MS),
+        loadNetWithTimeout(faceapi.nets.faceRecognitionNet, 'faceRecognitionNet', MODEL_URL, API_TIMEOUT_MS),
       ]);
 
       modelsLoaded = true;
