@@ -8,6 +8,10 @@ import {
   DEFAULT_SHIFT_DEFINITIONS,
 } from './rosterAlgorithm';
 
+// ============================================================================
+// 1. DATABASE SCHEMA & TYPES
+// ============================================================================
+
 export interface Employee {
   id: string;
   fullName: string;
@@ -102,9 +106,10 @@ export function getDB(): Promise<IDBPDatabase<OmniRosterDB>> {
   return dbPromise;
 }
 
-/**
- * Seed initial standalone data if database is empty
- */
+// ============================================================================
+// 2. SEEDING & UTILITIES
+// ============================================================================
+
 export async function seedInitialDataIfNeeded(): Promise<void> {
   const db = await getDB();
 
@@ -179,13 +184,12 @@ export async function seedInitialDataIfNeeded(): Promise<void> {
     await tx.done;
   }
 
-  // 3. Initial Sample Folders: Dual Modes (Simple Shift + Optimized Roster)
+  // 3. Initial Sample Folders
   const existingFolders = await db.getAll('folders');
   if (existingFolders.length === 0) {
     const now = new Date().toISOString();
     const todayStr = new Date().toISOString().split('T')[0];
 
-    // Pre-generate CSP schedule for seed roster
     const seedCandidates = [
       { id: 'emp-101', fullName: 'Alexander Wright' },
       { id: 'emp-102', fullName: 'Elena Rostova' },
@@ -249,50 +253,8 @@ export async function seedInitialDataIfNeeded(): Promise<void> {
     }
     await tx.done;
   }
-
-  // 4. Initial Sample Attendance
-  const existingAttendance = await db.getAll('attendance');
-  if (existingAttendance.length === 0) {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const seedAttendance: AttendanceRecord[] = [
-      {
-        id: 'att-01',
-        employeeId: 'emp-101',
-        employeeName: 'Alexander Wright',
-        folderId: 'folder-morning-security',
-        folderName: 'Morning Shift - Security',
-        timestamp: `${todayStr}T07:55:00.000Z`,
-        status: 'on_time',
-        snapshotBase64: '',
-        matchedConfidence: 98,
-      },
-      {
-        id: 'att-02',
-        employeeId: 'emp-103',
-        employeeName: 'Marcus Vance',
-        folderId: 'folder-csp-operations',
-        folderName: '24/7 Operations - CSP Roster',
-        timestamp: `${todayStr}T08:12:00.000Z`,
-        status: 'late',
-        snapshotBase64: '',
-        matchedConfidence: 95,
-      },
-    ];
-
-    const tx = db.transaction('attendance', 'readwrite');
-    for (const a of seedAttendance) {
-      await tx.store.put(a);
-    }
-    await tx.done;
-  }
 }
 
-/**
- * Calculate Punch Status using Folder's startTime and gracePeriodMinutes:
- * currentTime <= startTime + gracePeriod -> "on_time"
- * currentTime > startTime + gracePeriod -> "late"
- * currentTime < startTime - gracePeriod -> "early"
- */
 export function calculatePunchStatus(
   startTimeStr: string,
   gracePeriodMinutes: number,
@@ -300,26 +262,20 @@ export function calculatePunchStatus(
 ): 'on_time' | 'early' | 'late' {
   const [startHour, startMin] = (startTimeStr || '09:00').split(':').map(Number);
   const startMinutes = (startHour || 0) * 60 + (startMin || 0);
-
   const currentMinutes = nowDate.getHours() * 60 + nowDate.getMinutes();
   const grace = Number(gracePeriodMinutes) || 15;
-
   const earlyBoundary = startMinutes - grace;
   const lateBoundary = startMinutes + grace;
 
-  if (currentMinutes < earlyBoundary) {
-    return 'early';
-  } else if (currentMinutes > lateBoundary) {
-    return 'late';
-  } else {
-    return 'on_time';
-  }
+  if (currentMinutes < earlyBoundary) return 'early';
+  if (currentMinutes > lateBoundary) return 'late';
+  return 'on_time';
 }
 
-/**
- * Universal Synthetic Service Worker Loopback API Handler
- * Intercepts /api/* requests and resolves them with synthetic Response objects.
- */
+// ============================================================================
+// 3. UNIVERSAL LOOPBACK API HANDLER
+// ============================================================================
+
 export async function handleLoopbackApi(request: Request): Promise<Response> {
   await seedInitialDataIfNeeded();
   const db = await getDB();
@@ -334,103 +290,48 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
   };
 
   try {
-    // -------------------------------------------------------------
-    // 1. Settings & Admin Authentication
-    // -------------------------------------------------------------
+    // --- 1. Settings & Admin Authentication ---
     if (path === '/api/auth/admin' && method === 'POST') {
       const body = (await request.json()) as { pin: string };
-      const settings = (await db.get('settings', 'admin_pin')) || {
-        id: 'admin_pin',
-        pin: '0000',
-        isFirstLogin: true,
-      };
+      const settings = (await db.get('settings', 'admin_pin')) || { id: 'admin_pin', pin: '0000', isFirstLogin: true };
 
       if (body.pin === settings.pin) {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            isFirstLogin: settings.isFirstLogin,
-            message: 'Authenticated successfully',
-          }),
-          { status: 200, headers: jsonHeaders }
-        );
+        return new Response(JSON.stringify({ success: true, isFirstLogin: settings.isFirstLogin, message: 'Authenticated successfully' }), { status: 200, headers: jsonHeaders });
       } else {
-        return new Response(
-          JSON.stringify({ success: false, error: 'Invalid Admin PIN. Default is 0000.' }),
-          { status: 401, headers: jsonHeaders }
-        );
+        return new Response(JSON.stringify({ success: false, error: 'Invalid Admin PIN. Default is 0000.' }), { status: 401, headers: jsonHeaders });
       }
     }
 
     if (path === '/api/settings/admin-pin' && method === 'PUT') {
       const body = (await request.json()) as { currentPin: string; newPin: string };
-      const settings = (await db.get('settings', 'admin_pin')) || {
-        id: 'admin_pin',
-        pin: '0000',
-        isFirstLogin: true,
-      };
+      const settings = (await db.get('settings', 'admin_pin')) || { id: 'admin_pin', pin: '0000', isFirstLogin: true };
 
       if (!body.newPin || body.newPin.length !== 4) {
-        return new Response(
-          JSON.stringify({ error: 'PIN must be exactly 4 digits' }),
-          { status: 400, headers: jsonHeaders }
-        );
+        return new Response(JSON.stringify({ error: 'PIN must be exactly 4 digits' }), { status: 400, headers: jsonHeaders });
       }
-
       if (body.currentPin !== settings.pin) {
-        return new Response(
-          JSON.stringify({ error: 'Current PIN does not match' }),
-          { status: 403, headers: jsonHeaders }
-        );
+        return new Response(JSON.stringify({ error: 'Current PIN does not match' }), { status: 403, headers: jsonHeaders });
       }
 
-      await db.put('settings', {
-        id: 'admin_pin',
-        pin: body.newPin,
-        isFirstLogin: false,
-      });
-
-      return new Response(
-        JSON.stringify({ success: true, message: 'Admin PIN updated successfully' }),
-        { status: 200, headers: jsonHeaders }
-      );
+      await db.put('settings', { id: 'admin_pin', pin: body.newPin, isFirstLogin: false });
+      return new Response(JSON.stringify({ success: true, message: 'Admin PIN updated successfully' }), { status: 200, headers: jsonHeaders });
     }
 
     if (path === '/api/settings/status' && method === 'GET') {
-      const settings = (await db.get('settings', 'admin_pin')) || {
-        id: 'admin_pin',
-        pin: '0000',
-        isFirstLogin: true,
-      };
-      return new Response(
-        JSON.stringify({
-          isFirstLogin: settings.isFirstLogin,
-          isConfigured: true,
-        }),
-        { status: 200, headers: jsonHeaders }
-      );
+      const settings = (await db.get('settings', 'admin_pin')) || { id: 'admin_pin', pin: '0000', isFirstLogin: true };
+      return new Response(JSON.stringify({ isFirstLogin: settings.isFirstLogin, isConfigured: true }), { status: 200, headers: jsonHeaders });
     }
 
-    // -------------------------------------------------------------
-    // 2. Employee CRUD API
-    // -------------------------------------------------------------
+    // --- 2. Employee CRUD API ---
     if (path === '/api/employees' && method === 'GET') {
       const employees = await db.getAll('employees');
-      return new Response(JSON.stringify({ employees }), {
-        status: 200,
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ employees }), { status: 200, headers: jsonHeaders });
     }
 
     if (path === '/api/employees' && method === 'POST') {
       const body = (await request.json()) as Partial<Employee>;
       if (!body.fullName || !body.pin || !body.faceDescriptor) {
-        return new Response(
-          JSON.stringify({
-            error: 'Missing required employee fields: fullName, pin (4-digit), faceDescriptor',
-          }),
-          { status: 400, headers: jsonHeaders }
-        );
+        return new Response(JSON.stringify({ error: 'Missing required employee fields: fullName, pin, faceDescriptor' }), { status: 400, headers: jsonHeaders });
       }
 
       const newEmployee: Employee = {
@@ -445,21 +346,13 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
       };
 
       await db.put('employees', newEmployee);
-      return new Response(JSON.stringify({ success: true, employee: newEmployee }), {
-        status: 201,
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ success: true, employee: newEmployee }), { status: 201, headers: jsonHeaders });
     }
 
     if (path.startsWith('/api/employees/') && method === 'PUT') {
       const id = path.replace('/api/employees/', '').trim();
       const existing = await db.get('employees', id);
-      if (!existing) {
-        return new Response(
-          JSON.stringify({ error: 'Employee not found' }),
-          { status: 404, headers: jsonHeaders }
-        );
-      }
+      if (!existing) return new Response(JSON.stringify({ error: 'Employee not found' }), { status: 404, headers: jsonHeaders });
 
       const updates = (await request.json()) as Partial<Employee>;
       const updated: Employee = {
@@ -473,40 +366,24 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
       };
 
       await db.put('employees', updated);
-      return new Response(JSON.stringify({ success: true, employee: updated }), {
-        status: 200,
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ success: true, employee: updated }), { status: 200, headers: jsonHeaders });
     }
 
     if (path.startsWith('/api/employees/') && method === 'DELETE') {
       const id = path.replace('/api/employees/', '').trim();
       await db.delete('employees', id);
-      return new Response(JSON.stringify({ success: true, deletedId: id }), {
-        status: 200,
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ success: true, deletedId: id }), { status: 200, headers: jsonHeaders });
     }
 
-    // -------------------------------------------------------------
-    // 3. Folders API (Simple Shift & Optimized Roster)
-    // -------------------------------------------------------------
+    // --- 3. Folders API ---
     if (path === '/api/folders' && method === 'GET') {
       const folders = await db.getAll('folders');
-      return new Response(JSON.stringify({ folders }), {
-        status: 200,
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ folders }), { status: 200, headers: jsonHeaders });
     }
 
     if (path === '/api/folders' && method === 'POST') {
       const body = (await request.json()) as Partial<Folder>;
-      if (!body.name) {
-        return new Response(
-          JSON.stringify({ error: 'Folder name is required' }),
-          { status: 400, headers: jsonHeaders }
-        );
-      }
+      if (!body.name) return new Response(JSON.stringify({ error: 'Folder name is required' }), { status: 400, headers: jsonHeaders });
 
       const folderType: FolderType = body.type || 'simple_shift';
       const now = new Date().toISOString();
@@ -525,21 +402,13 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
       };
 
       await db.put('folders', newFolder);
-      return new Response(JSON.stringify({ success: true, folder: newFolder }), {
-        status: 201,
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ success: true, folder: newFolder }), { status: 201, headers: jsonHeaders });
     }
 
     if (path.startsWith('/api/folders/') && method === 'PUT') {
       const id = path.replace('/api/folders/', '').trim();
       const existing = await db.get('folders', id);
-      if (!existing) {
-        return new Response(
-          JSON.stringify({ error: 'Folder not found' }),
-          { status: 404, headers: jsonHeaders }
-        );
-      }
+      if (!existing) return new Response(JSON.stringify({ error: 'Folder not found' }), { status: 404, headers: jsonHeaders });
 
       const updates = (await request.json()) as Partial<Folder>;
       const updated: Folder = {
@@ -555,70 +424,36 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
       };
 
       await db.put('folders', updated);
-      return new Response(JSON.stringify({ success: true, folder: updated }), {
-        status: 200,
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ success: true, folder: updated }), { status: 200, headers: jsonHeaders });
     }
 
     if (path.startsWith('/api/folders/') && method === 'DELETE') {
       const id = path.replace('/api/folders/', '').trim();
       await db.delete('folders', id);
-      return new Response(JSON.stringify({ success: true, deletedId: id }), {
-        status: 200,
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ success: true, deletedId: id }), { status: 200, headers: jsonHeaders });
     }
 
-    // CSP Roster Optimization Endpoint
     if (path === '/api/roster/optimize' && method === 'POST') {
-      const body = (await request.json()) as {
-        employeeIds?: string[];
-        config: RosterConstraintConfig;
-      };
-
+      const body = (await request.json()) as { employeeIds?: string[]; config: RosterConstraintConfig };
       const allEmployees = await db.getAll('employees');
       const candidatePool = body.employeeIds && body.employeeIds.length > 0
         ? allEmployees.filter((e) => body.employeeIds!.includes(e.id))
         : allEmployees;
 
       const result: RosterOptimizationResult = generateOptimizedRoster(candidatePool, body.config);
-      return new Response(JSON.stringify({ success: true, result }), {
-        status: 200,
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ success: true, result }), { status: 200, headers: jsonHeaders });
     }
 
-    // -------------------------------------------------------------
-    // 4. Attendance API
-    // POST /api/attendance/punch (Duplicate check + status calculation)
-    // GET /api/attendance (search, dateFrom, dateTo, status)
-    // GET /api/attendance/export (Custom column RFC-4180 CSV)
-    // -------------------------------------------------------------
+    // --- 4. Attendance API ---
     if (path === '/api/attendance/punch' && method === 'POST') {
-      const body = (await request.json()) as {
-        employeeId: string;
-        employeeName?: string;
-        folderId: string;
-        snapshotBase64?: string;
-        matchedConfidence?: number;
-        allowDuplicate?: boolean;
-      };
+      const body = (await request.json()) as { employeeId: string; employeeName?: string; folderId: string; snapshotBase64?: string; matchedConfidence?: number; allowDuplicate?: boolean };
 
       if (!body.employeeId || !body.folderId) {
-        return new Response(
-          JSON.stringify({ error: 'employeeId and folderId are required' }),
-          { status: 400, headers: jsonHeaders }
-        );
+        return new Response(JSON.stringify({ error: 'employeeId and folderId are required' }), { status: 400, headers: jsonHeaders });
       }
 
       const folder = await db.get('folders', body.folderId);
-      if (!folder) {
-        return new Response(
-          JSON.stringify({ error: 'Folder not found' }),
-          { status: 404, headers: jsonHeaders }
-        );
-      }
+      if (!folder) return new Response(JSON.stringify({ error: 'Folder not found' }), { status: 404, headers: jsonHeaders });
 
       const employee = await db.get('employees', body.employeeId);
       const employeeName = employee?.fullName || body.employeeName || 'Unknown Employee';
@@ -626,68 +461,31 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
       const now = new Date();
       const todayDateStr = now.toISOString().split('T')[0];
 
-      // Duplicate Check-In Detection:
       const allAttendance = await db.getAll('attendance');
       const existingPunchToday = allAttendance.find(
-        (a) =>
-          a.employeeId === body.employeeId &&
-          a.folderId === body.folderId &&
-          a.timestamp.startsWith(todayDateStr)
+        (a) => a.employeeId === body.employeeId && a.folderId === body.folderId && a.timestamp.startsWith(todayDateStr)
       );
 
       if (existingPunchToday && !body.allowDuplicate) {
-        return new Response(
-          JSON.stringify({
-            duplicate: true,
-            message: `You have already checked in for ${folder.name} today at ${new Date(
-              existingPunchToday.timestamp
-            ).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`,
-            existingPunch: existingPunchToday,
-          }),
-          { status: 409, headers: jsonHeaders }
-        );
+        return new Response(JSON.stringify({
+          duplicate: true,
+          message: `You have already checked in for ${folder.name} today at ${new Date(existingPunchToday.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`,
+          existingPunch: existingPunchToday,
+        }), { status: 409, headers: jsonHeaders });
       }
 
-      // Calculate status based on folder type:
       let calculatedStatus: 'on_time' | 'early' | 'late' | 'duplicate' = 'on_time';
       if (existingPunchToday) {
         calculatedStatus = 'duplicate';
       } else if (folder.type === 'optimized_roster' && folder.generatedShifts && folder.generatedShifts.length > 0) {
-        // Find today's shift assigned to this employee
-        const todayAssignedShift = folder.generatedShifts.find(
-          (s) => s.dateStr === todayDateStr && s.staffAssigned?.includes(body.employeeId)
-        );
-
+        const todayAssignedShift = folder.generatedShifts.find((s) => s.dateStr === todayDateStr && s.staffAssigned?.includes(body.employeeId));
         if (todayAssignedShift) {
-          calculatedStatus = calculatePunchStatus(
-            todayAssignedShift.startTime,
-            todayAssignedShift.gracePeriodMinutes || 15,
-            now
-          );
+          calculatedStatus = calculatePunchStatus(todayAssignedShift.startTime, todayAssignedShift.gracePeriodMinutes || 15, now);
         } else {
-          // If no shift directly assigned today, check against today's active shift or folder default
-          const todayShifts = folder.generatedShifts.filter((s) => s.dateStr === todayDateStr);
-          if (todayShifts.length > 0) {
-            calculatedStatus = calculatePunchStatus(
-              todayShifts[0].startTime,
-              todayShifts[0].gracePeriodMinutes || 15,
-              now
-            );
-          } else {
-            calculatedStatus = calculatePunchStatus(
-              folder.startTime || '09:00',
-              folder.gracePeriodMinutes || 15,
-              now
-            );
-          }
+          calculatedStatus = calculatePunchStatus(folder.startTime || '09:00', folder.gracePeriodMinutes || 15, now);
         }
       } else {
-        // Simple Shift logic
-        calculatedStatus = calculatePunchStatus(
-          folder.startTime || '09:00',
-          folder.gracePeriodMinutes || 15,
-          now
-        );
+        calculatedStatus = calculatePunchStatus(folder.startTime || '09:00', folder.gracePeriodMinutes || 15, now);
       }
 
       const record: AttendanceRecord = {
@@ -703,10 +501,7 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
       };
 
       await db.put('attendance', record);
-      return new Response(JSON.stringify({ success: true, record }), {
-        status: 201,
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ success: true, record }), { status: 201, headers: jsonHeaders });
     }
 
     if (path === '/api/attendance' && method === 'GET') {
@@ -716,34 +511,14 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
       const statusParam = url.searchParams.get('status')?.toLowerCase() || 'all';
 
       let records = await db.getAll('attendance');
-
       records.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-      if (searchParam) {
-        records = records.filter(
-          (r) =>
-            r.employeeName.toLowerCase().includes(searchParam) ||
-            r.folderName.toLowerCase().includes(searchParam) ||
-            r.employeeId.toLowerCase().includes(searchParam)
-        );
-      }
+      if (searchParam) records = records.filter((r) => r.employeeName.toLowerCase().includes(searchParam) || r.folderName.toLowerCase().includes(searchParam));
+      if (dateFrom) records = records.filter((r) => r.timestamp.slice(0, 10) >= dateFrom);
+      if (dateTo) records = records.filter((r) => r.timestamp.slice(0, 10) <= dateTo);
+      if (statusParam && statusParam !== 'all') records = records.filter((r) => r.status.toLowerCase() === statusParam);
 
-      if (dateFrom) {
-        records = records.filter((r) => r.timestamp.slice(0, 10) >= dateFrom);
-      }
-
-      if (dateTo) {
-        records = records.filter((r) => r.timestamp.slice(0, 10) <= dateTo);
-      }
-
-      if (statusParam && statusParam !== 'all') {
-        records = records.filter((r) => r.status.toLowerCase() === statusParam);
-      }
-
-      return new Response(JSON.stringify({ attendance: records }), {
-        status: 200,
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ attendance: records }), { status: 200, headers: jsonHeaders });
     }
 
     if (path === '/api/attendance/export' && method === 'GET') {
@@ -751,37 +526,19 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
       const dateFrom = url.searchParams.get('dateFrom') || '';
       const dateTo = url.searchParams.get('dateTo') || '';
       const statusParam = url.searchParams.get('status')?.toLowerCase() || 'all';
-
       const colsParam = url.searchParams.get('columns') || 'name,folder,datetime,status';
       const colList = colsParam.split(',').map((c) => c.trim().toLowerCase());
 
       let records = await db.getAll('attendance');
       records.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-      if (searchParam) {
-        records = records.filter(
-          (r) =>
-            r.employeeName.toLowerCase().includes(searchParam) ||
-            r.folderName.toLowerCase().includes(searchParam)
-        );
-      }
-
-      if (dateFrom) {
-        records = records.filter((r) => r.timestamp.slice(0, 10) >= dateFrom);
-      }
-
-      if (dateTo) {
-        records = records.filter((r) => r.timestamp.slice(0, 10) <= dateTo);
-      }
-
-      if (statusParam && statusParam !== 'all') {
-        records = records.filter((r) => r.status.toLowerCase() === statusParam);
-      }
+      if (searchParam) records = records.filter((r) => r.employeeName.toLowerCase().includes(searchParam) || r.folderName.toLowerCase().includes(searchParam));
+      if (dateFrom) records = records.filter((r) => r.timestamp.slice(0, 10) >= dateFrom);
+      if (dateTo) records = records.filter((r) => r.timestamp.slice(0, 10) <= dateTo);
+      if (statusParam && statusParam !== 'all') records = records.filter((r) => r.status.toLowerCase() === statusParam);
 
       const headers: string[] = [];
-      if (colList.includes('id')) headers.push('Record ID');
       if (colList.includes('name')) headers.push('Employee Name');
-      if (colList.includes('employeeid')) headers.push('Employee ID');
       if (colList.includes('folder')) headers.push('Shift Folder');
       if (colList.includes('datetime')) headers.push('Date & Time');
       if (colList.includes('status')) headers.push('Status');
@@ -789,9 +546,7 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
 
       const rows = records.map((r) => {
         const row: (string | number)[] = [];
-        if (colList.includes('id')) row.push(r.id);
         if (colList.includes('name')) row.push(r.employeeName);
-        if (colList.includes('employeeid')) row.push(r.employeeId);
         if (colList.includes('folder')) row.push(r.folderName);
         if (colList.includes('datetime')) row.push(new Date(r.timestamp).toLocaleString());
         if (colList.includes('status')) row.push(r.status.toUpperCase());
@@ -809,18 +564,11 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
       });
     }
 
-    // -------------------------------------------------------------
-    // Fallback 404 for unknown /api/*
-    // -------------------------------------------------------------
-    return new Response(
-      JSON.stringify({ error: `Not found: ${method} ${path}` }),
-      { status: 404, headers: jsonHeaders }
-    );
+    // --- Fallback 404 ---
+    return new Response(JSON.stringify({ error: `Not found: ${method} ${path}` }), { status: 404, headers: jsonHeaders });
+
   } catch (err: any) {
-    console.error('[SW Loopback Gateway] Error processing request:', err);
-    return new Response(
-      JSON.stringify({ error: 'Internal Server Error', details: err?.message || String(err) }),
-      { status: 500, headers: jsonHeaders }
-    );
+    console.error('[Loopback Gateway] Error processing request:', err);
+    return new Response(JSON.stringify({ error: 'Internal Server Error', details: err?.message || String(err) }), { status: 500, headers: jsonHeaders });
   }
 }
