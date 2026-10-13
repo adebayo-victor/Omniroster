@@ -6,42 +6,87 @@ import { handleLoopbackApi } from './utils/db.ts';
 // ============================================================================
 // 1. Dual-Layer Loopback Fetch Guard
 // ============================================================================
-// In dev environments (like GitHub Codespaces) or on initial page load before the
-// Service Worker finishes claiming clients, standard fetch('/api/...') can leak
-// to the Vite dev server and result in 404. This interceptor catches any /api/*
-// request if the Service Worker controller is not yet actively intercepting it.
-if (typeof window !== 'undefined') {
-  const originalFetch = window.fetch.bind(window);
+// In dev environments (like GitHub Codespaces or Cloud Run previews) or on initial
+// page load before the Service Worker finishes claiming clients, standard
+// fetch('/api/...') can leak to the Vite dev server and result in 404.
+// This interceptor safely catches any /api/* request when the Service Worker is
+// not yet actively controlling the page.
+function installFetchInterceptor(): void {
+  if (typeof window === 'undefined') return;
 
-  window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    try {
-      const urlString =
-        typeof input === 'string'
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : (input as Request).url;
+  try {
+    const originalFetch = window.fetch ? window.fetch.bind(window) : undefined;
+    if (!originalFetch) return;
 
-      const isApiRequest =
-        urlString.startsWith('/api/') ||
-        urlString.startsWith(`${window.location.origin}/api/`);
+    const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      try {
+        const urlString =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+            ? input.toString()
+            : (input as Request).url;
 
-      // If the Service Worker is actively controlling the page, let the SW fetch handler intercept it.
-      // If the Service Worker is NOT yet controlling the page, handle directly via loopback logic.
-      if (isApiRequest && (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller)) {
-        const fullUrl = urlString.startsWith('http')
-          ? urlString
-          : `${window.location.origin}${urlString}`;
-        const syntheticRequest = new Request(fullUrl, init);
-        return await handleLoopbackApi(syntheticRequest);
+        const isApiRequest =
+          urlString.startsWith('/api/') ||
+          urlString.startsWith(`${window.location.origin}/api/`);
+
+        // If the Service Worker is actively controlling the page, let the SW fetch handler intercept it.
+        // If the Service Worker is NOT yet controlling the page, handle directly via loopback logic.
+        const isSwControlling = 'serviceWorker' in navigator && !!navigator.serviceWorker.controller;
+        if (isApiRequest && !isSwControlling) {
+          const fullUrl = urlString.startsWith('http')
+            ? urlString
+            : `${window.location.origin}${urlString}`;
+          const syntheticRequest = new Request(fullUrl, init);
+          return await handleLoopbackApi(syntheticRequest);
+        }
+      } catch (err: unknown) {
+        console.warn('[Loopback Guard] Direct fallback active:', err);
       }
-    } catch (err: unknown) {
-      console.warn('[Loopback Guard] Direct fallback active:', err);
+
+      return originalFetch(input, init);
+    };
+
+    // Safely assign customFetch via Object.defineProperty to prevent:
+    // "TypeError: Cannot set property fetch of #<Window> which has only a getter"
+    let patched = false;
+    try {
+      Object.defineProperty(window, 'fetch', {
+        value: customFetch,
+        writable: true,
+        configurable: true,
+      });
+      patched = true;
+    } catch {
+      // Fallback to Window.prototype if window is non-configurable
+      try {
+        Object.defineProperty(Window.prototype, 'fetch', {
+          value: customFetch,
+          writable: true,
+          configurable: true,
+        });
+        patched = true;
+      } catch {
+        try {
+          (window as unknown as Record<string, unknown>).fetch = customFetch;
+          patched = true;
+        } catch (assignErr) {
+          console.warn('[Loopback Guard] Could not overwrite window.fetch directly:', assignErr);
+        }
+      }
     }
 
-    return originalFetch(input, init);
-  };
+    if (patched) {
+      console.log('[Loopback Guard] Fetch interceptor installed successfully.');
+    }
+  } catch (err) {
+    console.warn('[Loopback Guard] Initialization error:', err);
+  }
 }
+
+// Install interceptor immediately before any React component effects run
+installFetchInterceptor();
 
 // ============================================================================
 // 2. Service Worker Dev & Prod Registration Gateway
@@ -74,7 +119,7 @@ async function initServiceWorker(): Promise<void> {
     // Wait briefly for controller takeover if not already controlling
     if (!navigator.serviceWorker.controller) {
       await new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => resolve(), 800);
+        const timeout = setTimeout(() => resolve(), 600);
         navigator.serviceWorker.addEventListener(
           'controllerchange',
           () => {
@@ -86,7 +131,9 @@ async function initServiceWorker(): Promise<void> {
       });
     }
   } catch (err) {
-    console.warn('[PWA] Service Worker registration note:', err);
+    // If registration fails (e.g. redirected script in iframe preview or dev proxy),
+    // the Loopback Guard already handles /api/* seamlessly in-memory.
+    console.warn('[PWA] Service Worker registration note (Loopback Guard active):', err);
   }
 }
 
@@ -94,8 +141,12 @@ async function initServiceWorker(): Promise<void> {
 // 3. Application Bootstrap
 // ============================================================================
 async function bootstrap() {
-  // Ensure the Service Worker is registered before initial React queries fire
-  await initServiceWorker();
+  try {
+    // Attempt Service Worker registration without blocking UI mount if it takes time
+    await initServiceWorker();
+  } catch (e) {
+    console.warn('[Bootstrap] SW init note:', e);
+  }
 
   const container = document.getElementById('root');
   if (container) {
