@@ -1,0 +1,6 @@
+{
+  "name": "OmniRoster OS",
+  "description": "Offline-first, biometric attendance Progressive Web App with face recognition, Service Worker API gateway, and roster management.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
