@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Search,
   Filter,
@@ -78,6 +78,18 @@ export const AttendanceViewer: React.FC<AttendanceViewerProps> = ({ onRefresh })
   useEffect(() => {
     fetchRecords();
   }, [search, dateFrom, dateTo, statusFilter]);
+
+  // Real-time filtering by Employee Name or Folder Name
+  const filteredRecords = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return records;
+    return records.filter((r) => {
+      const empName = (r.employeeName || '').toLowerCase();
+      const folder = (r.folderName || '').toLowerCase();
+      const empId = (r.employeeId || '').toLowerCase();
+      return empName.includes(q) || folder.includes(q) || empId.includes(q);
+    });
+  }, [records, search]);
 
   const toggleColumn = (id: string) => {
     setColumns((prev) =>
@@ -192,10 +204,19 @@ export const AttendanceViewer: React.FC<AttendanceViewerProps> = ({ onRefresh })
 
       {/* Filter Toolbar */}
       <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* Search Input */}
+        {/* Search Input - Universal Search */}
         <div>
-          <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">
-            Search Staff or Folder
+          <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+            <span>Search Attendance</span>
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+              >
+                Clear
+              </button>
+            )}
           </label>
           <div className="relative">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -203,8 +224,8 @@ export const AttendanceViewer: React.FC<AttendanceViewerProps> = ({ onRefresh })
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="e.g. Elena, Night Shift..."
-              className="w-full pl-9 pr-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="Filter by Employee or Folder..."
+              className="w-full pl-9 pr-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-slate-400"
             />
           </div>
         </div>
@@ -261,10 +282,12 @@ export const AttendanceViewer: React.FC<AttendanceViewerProps> = ({ onRefresh })
             <RotateCw className="w-6 h-6 animate-spin text-blue-500 mb-2" />
             <span>Loading records from local store...</span>
           </div>
-        ) : records.length === 0 ? (
+        ) : filteredRecords.length === 0 ? (
           <div className="p-12 text-center text-slate-500 text-xs">
             <Clock className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-            <p className="font-semibold text-slate-700 dark:text-slate-300">No attendance records match filter criteria.</p>
+            <p className="font-semibold text-slate-700 dark:text-slate-300">
+              {search ? `No attendance records match "${search}"` : 'No attendance records match filter criteria.'}
+            </p>
             <p className="text-[11px] text-slate-400 mt-0.5">Try clearing the search or date parameters.</p>
           </div>
         ) : (
@@ -281,7 +304,7 @@ export const AttendanceViewer: React.FC<AttendanceViewerProps> = ({ onRefresh })
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {records.map((r) => (
+                {filteredRecords.map((r) => (
                   <tr
                     key={r.id}
                     className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors"
@@ -334,7 +357,7 @@ export const AttendanceViewer: React.FC<AttendanceViewerProps> = ({ onRefresh })
       <ExportModal
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
-        records={records}
+        records={filteredRecords}
         dateRangeText={
           dateFrom && dateTo
             ? `${dateFrom} to ${dateTo}`

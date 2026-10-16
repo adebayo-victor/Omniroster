@@ -161,7 +161,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 Excel (CSV)
               </h4>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                Raw RFC-4180 data spreadsheet. Ideal for Microsoft Excel, Google Sheets, or importing into payroll systems.
+                Standard spreadsheet format. Perfect for Excel, Google Sheets, and payroll software.
               </p>
             </div>
 
@@ -207,7 +207,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 PDF Report
               </h4>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                Vector-rendered corporate report with audit header, color-coded status badges, and HR/Supervisor sign-off lines.
+                Professional printable report. Includes color-coded statuses, audit headers, and signature lines for HR.
               </p>
             </div>
 

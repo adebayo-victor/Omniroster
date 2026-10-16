@@ -18,6 +18,7 @@ import {
   Layers,
   ChevronRight,
   ShieldAlert,
+  Search,
 } from 'lucide-react';
 import type { Folder, Employee, FolderType } from '../utils/db';
 import {
@@ -36,6 +37,7 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
   const [folders, setFolders] = useState<Folder[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
 
   // Modal State
   const [showModal, setShowModal] = useState(false);
@@ -289,6 +291,12 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
     }
   };
 
+  const filteredFolders = folders.filter((f) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return f.name.toLowerCase().includes(q);
+  });
+
   return (
     <div className="space-y-6">
       {/* Header Card */}
@@ -303,13 +311,27 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
           </p>
         </div>
 
-        <button
-          onClick={openCreateModal}
-          className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Create New Folder</span>
-        </button>
+        {/* Top Right Controls: Search bar next to Create Folder button */}
+        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-64">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search folders..."
+              className="w-full pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+
+          <button
+            onClick={openCreateModal}
+            className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Create Folder</span>
+          </button>
+        </div>
       </div>
 
       {/* Folders Grid */}
@@ -334,9 +356,19 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
             Create Folder
           </button>
         </div>
+      ) : filteredFolders.length === 0 ? (
+        <div className="p-12 text-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
+          <FolderIcon className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+            No Folders Found
+          </h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            No folders match "{search}". Try searching with a different name.
+          </p>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {folders.map((folder) => {
+          {filteredFolders.map((folder) => {
             const memberCount = folder.assignedEmployeeIds?.length || 0;
             const isRoster = folder.type === 'optimized_roster';
             const shiftsCount = folder.generatedShifts?.length || 0;

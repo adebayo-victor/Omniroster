@@ -21,6 +21,7 @@ import {
 import type { Employee } from '../utils/db';
 import { CameraView, type CameraViewRef } from './CameraView';
 import { detectFaceWithDescriptor } from '../utils/biometrics';
+import { MemberDetailsModal } from './MemberDetailsModal';
 
 interface MembersSectionProps {
   onRefreshStats?: () => void;
@@ -31,6 +32,10 @@ export const MembersSection: React.FC<MembersSectionProps> = ({ onRefreshStats }
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [revealedPins, setRevealedPins] = useState<Record<string, boolean>>({});
+
+  // Member Details / Edit Modal State
+  const [selectedMemberForDetails, setSelectedMemberForDetails] = useState<Employee | null>(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
 
   // Add Member Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -251,6 +256,18 @@ export const MembersSection: React.FC<MembersSectionProps> = ({ onRefreshStats }
     }
   };
 
+  const handleRowClick = (emp: Employee) => {
+    setSelectedMemberForDetails(emp);
+    setShowDetailsModal(true);
+  };
+
+  const handleMemberSaved = (updatedMember: Employee) => {
+    setEmployees((prev) =>
+      prev.map((emp) => (emp.id === updatedMember.id ? updatedMember : emp))
+    );
+    if (onRefreshStats) onRefreshStats();
+  };
+
   const filteredEmployees = employees.filter((e) => {
     const q = search.toLowerCase();
     return (
@@ -330,11 +347,13 @@ export const MembersSection: React.FC<MembersSectionProps> = ({ onRefreshStats }
                   return (
                     <tr
                       key={emp.id}
-                      className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors"
+                      onClick={() => handleRowClick(emp)}
+                      className="hover:bg-blue-50/50 dark:hover:bg-slate-800/60 transition-colors cursor-pointer group"
+                      title="Click to view or edit member details"
                     >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden flex items-center justify-center shrink-0">
+                          <div className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden flex items-center justify-center shrink-0 group-hover:border-blue-400 dark:group-hover:border-blue-500 transition-colors">
                             {emp.profilePhotoBase64 ? (
                               <img
                                 src={emp.profilePhotoBase64}
@@ -348,7 +367,7 @@ export const MembersSection: React.FC<MembersSectionProps> = ({ onRefreshStats }
                             )}
                           </div>
                           <div>
-                            <span className="font-bold text-slate-900 dark:text-white block">
+                            <span className="font-bold text-slate-900 dark:text-white block group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                               {emp.fullName}
                             </span>
                             <span className="text-[10px] text-slate-400 font-mono">
@@ -370,8 +389,11 @@ export const MembersSection: React.FC<MembersSectionProps> = ({ onRefreshStats }
                           <span>{isPinRevealed ? emp.pin : '••••'}</span>
                           <button
                             type="button"
-                            onClick={() => togglePinReveal(emp.id)}
-                            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePinReveal(emp.id);
+                            }}
+                            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer p-0.5 rounded"
                             title={isPinRevealed ? 'Hide PIN' : 'Reveal PIN'}
                           >
                             {isPinRevealed ? (
@@ -386,7 +408,7 @@ export const MembersSection: React.FC<MembersSectionProps> = ({ onRefreshStats }
                         {emp.faceDescriptor && emp.faceDescriptor.length > 0 ? (
                           <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            128-D Vector Enrolled
+                            Face Biometric Enrolled
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[11px] text-amber-500">
@@ -397,7 +419,10 @@ export const MembersSection: React.FC<MembersSectionProps> = ({ onRefreshStats }
                       </td>
                       <td className="px-4 py-3 text-right">
                         <button
-                          onClick={() => handleDeleteEmployee(emp.id, emp.fullName)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteEmployee(emp.id, emp.fullName);
+                          }}
                           className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors cursor-pointer"
                           title="Remove Member"
                         >
@@ -601,6 +626,17 @@ export const MembersSection: React.FC<MembersSectionProps> = ({ onRefreshStats }
           </div>
         </div>
       )}
+
+      {/* Member Details & Edit Overlay Modal */}
+      <MemberDetailsModal
+        isOpen={showDetailsModal}
+        member={selectedMemberForDetails}
+        onClose={() => {
+          setShowDetailsModal(false);
+          setSelectedMemberForDetails(null);
+        }}
+        onSaved={handleMemberSaved}
+      />
     </div>
   );
 };

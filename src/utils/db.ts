@@ -457,8 +457,12 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
       });
     }
 
-    if (path.startsWith('/api/employees/') && method === 'PUT') {
-      const id = path.replace('/api/employees/', '').trim();
+    if ((path.startsWith('/api/employees/') || path === '/api/employees') && method === 'PUT') {
+      const updates = (await request.json()) as Partial<Employee>;
+      const id = path.startsWith('/api/employees/')
+        ? path.replace('/api/employees/', '').trim()
+        : String(updates.id || '').trim();
+
       const existing = await db.get('employees', id);
       if (!existing) {
         return new Response(
@@ -466,8 +470,6 @@ export async function handleLoopbackApi(request: Request): Promise<Response> {
           { status: 404, headers: jsonHeaders }
         );
       }
-
-      const updates = (await request.json()) as Partial<Employee>;
       const updated: Employee = {
         ...existing,
         fullName: updates.fullName !== undefined ? updates.fullName.trim() : existing.fullName,

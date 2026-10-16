@@ -183,18 +183,14 @@ const styles = StyleSheet.create({
   signatureLine: {
     borderBottomWidth: 1,
     borderBottomColor: '#94a3b8',
-    height: 32,
-    marginBottom: 4,
+    height: 28,
+    marginBottom: 6,
   },
-  signatureLabel: {
+  signatureField: {
     fontSize: 8,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: 'Helvetica',
     color: '#334155',
-  },
-  signatureSubtext: {
-    fontSize: 7,
-    color: '#64748b',
-    marginTop: 1,
+    marginBottom: 4,
   },
   footer: {
     position: 'absolute',
@@ -384,17 +380,19 @@ export const AttendancePDFDocument: React.FC<AttendancePDFProps> = ({
           )}
         </View>
 
-        {/* Corporate Signatures */}
+        {/* Generic Corporate Signatures */}
         <View style={styles.signaturesContainer} wrap={false}>
           <View style={styles.signatureBox}>
             <View style={styles.signatureLine} />
-            <Text style={styles.signatureLabel}>Human Resources Representative</Text>
-            <Text style={styles.signatureSubtext}>Verified & Audited By (Name & Signature)</Text>
+            <Text style={styles.signatureField}>Signature:</Text>
+            <Text style={styles.signatureField}>Name:</Text>
+            <Text style={styles.signatureField}>Date:</Text>
           </View>
           <View style={styles.signatureBox}>
             <View style={styles.signatureLine} />
-            <Text style={styles.signatureLabel}>Operations / Shift Supervisor</Text>
-            <Text style={styles.signatureSubtext}>Approved By (Name & Signature)</Text>
+            <Text style={styles.signatureField}>Signature:</Text>
+            <Text style={styles.signatureField}>Name:</Text>
+            <Text style={styles.signatureField}>Date:</Text>
           </View>
         </View>
 
