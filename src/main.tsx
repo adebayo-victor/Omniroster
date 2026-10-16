@@ -69,10 +69,13 @@ function installFetchInterceptor(): void {
         patched = true;
       } catch {
         try {
-          (window as unknown as Record<string, unknown>).fetch = customFetch;
+          Object.defineProperty(window, 'fetch', {
+            get: () => customFetch,
+            configurable: true,
+          });
           patched = true;
         } catch (assignErr) {
-          console.warn('[Loopback Guard] Could not overwrite window.fetch directly:', assignErr);
+          console.warn('[Loopback Guard] Could not patch window.fetch:', assignErr);
         }
       }
     }
@@ -89,23 +92,29 @@ function installFetchInterceptor(): void {
 installFetchInterceptor();
 
 // ============================================================================
-// 2. Service Worker Dev & Prod Registration Gateway
+// 2. Service Worker Production Registration Gateway
 // ============================================================================
-// In Vite development mode with `vite-plugin-pwa` (injectManifest), the SW is
-// compiled on-the-fly and served at `/dev-sw.js?dev-sw` with type: 'module'.
-// In production builds, it is compiled to `/sw.js`.
+// In development mode, the Loopback Guard directly routes all /api/* requests
+// to IndexedDB, preventing issues with dev server proxy redirects.
+// In production builds, the Service Worker (/sw.js) is registered to provide
+// 100% offline-first PWA caching and background sync.
 async function initServiceWorker(): Promise<void> {
   if (!('serviceWorker' in navigator)) {
     console.warn('[PWA] Service Workers are not supported in this browser environment.');
     return;
   }
 
-  try {
-    const swUrl = import.meta.env.DEV ? '/dev-sw.js?dev-sw' : '/sw.js';
-    const swType: WorkerType = import.meta.env.DEV ? 'module' : 'classic';
+  // In development environments (including sandboxes and Codespaces),
+  // rely directly on the client-side Loopback Guard for zero-latency IndexedDB routing.
+  if (import.meta.env.DEV) {
+    console.log('[PWA] Development mode active: Loopback Guard is handling all /api/* requests.');
+    return;
+  }
 
+  try {
+    const swUrl = '/sw.js';
     const registration = await navigator.serviceWorker.register(swUrl, {
-      type: swType,
+      type: 'classic',
       scope: '/',
     });
 
@@ -138,8 +147,6 @@ async function initServiceWorker(): Promise<void> {
       });
     }
   } catch (err) {
-    // If registration fails (e.g. redirected script in iframe preview or dev proxy),
-    // the Loopback Guard already handles /api/* seamlessly in-memory.
     console.warn('[PWA] Service Worker registration note (Loopback Guard active):', err);
   }
 }

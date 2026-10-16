@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   FileSpreadsheet,
+  FileText,
   X,
   CheckSquare,
   Square,
@@ -17,7 +18,8 @@ import {
   Sparkles,
 } from 'lucide-react';
 import type { AttendanceRecord } from '../utils/db';
-import { downloadCSV } from '../utils/csvExport';
+import { downloadCSV, generateCSV } from '../utils/csvExport';
+import { ExportModal } from './ExportModal';
 
 interface AttendanceViewerProps {
   onRefresh?: () => void;
@@ -182,8 +184,8 @@ export const AttendanceViewer: React.FC<AttendanceViewerProps> = ({ onRefresh })
             onClick={() => setShowExportModal(true)}
             className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-2 shadow-sm transition-all cursor-pointer"
           >
-            <FileSpreadsheet className="w-4 h-4 text-white" />
-            <span>Export CSV</span>
+            <Download className="w-4 h-4 text-white" />
+            <span>Export Data</span>
           </button>
         </div>
       </div>
@@ -328,69 +330,22 @@ export const AttendanceViewer: React.FC<AttendanceViewerProps> = ({ onRefresh })
         )}
       </div>
 
-      {/* Custom Column CSV Export Modal */}
-      {showExportModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="w-5 h-5 text-blue-600" />
-                <h3 className="font-bold text-slate-900 dark:text-white text-base">
-                  Export Attendance CSV
-                </h3>
-              </div>
-              <button
-                onClick={() => setShowExportModal(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Select which fields to include in the RFC-4180 compliant CSV download file:
-            </p>
-
-            <div className="space-y-2.5 py-1">
-              {columns.map((col) => (
-                <div
-                  key={col.id}
-                  onClick={() => toggleColumn(col.id)}
-                  className="flex items-center justify-between p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer select-none transition-colors"
-                >
-                  <span className="text-xs font-medium text-slate-800 dark:text-slate-200">
-                    {col.label}
-                  </span>
-                  {col.selected ? (
-                    <CheckSquare className="w-4 h-4 text-blue-600" />
-                  ) : (
-                    <Square className="w-4 h-4 text-slate-400" />
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setShowExportModal(false)}
-                className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold hover:bg-slate-200 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={exporting}
-                onClick={handleExportCSV}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>{exporting ? 'Generating...' : 'Download CSV'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Visual Export Format Selector Modal (CSV vs PDF) */}
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        records={records}
+        dateRangeText={
+          dateFrom && dateTo
+            ? `${dateFrom} to ${dateTo}`
+            : dateFrom
+            ? `From ${dateFrom}`
+            : dateTo
+            ? `Until ${dateTo}`
+            : 'All recorded dates'
+        }
+        onExportCSVFallback={handleExportCSV}
+      />
     </div>
   );
 };

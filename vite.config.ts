@@ -51,7 +51,7 @@ export default defineConfig(() => {
           maximumFileSizeToCacheInBytes: 25 * 1024 * 1024, // 25MB to precache all face-api models
         },
         devOptions: {
-          enabled: true,
+          enabled: false,
           type: 'module',
           navigateFallback: 'index.html',
         },
