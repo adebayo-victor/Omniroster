@@ -31,10 +31,10 @@ function installFetchInterceptor(): void {
           urlString.startsWith('/api/') ||
           urlString.startsWith(`${window.location.origin}/api/`);
 
-        // If the Service Worker is actively controlling the page, let the SW fetch handler intercept it.
-        // If the Service Worker is NOT yet controlling the page, handle directly via loopback logic.
-        const isSwControlling = 'serviceWorker' in navigator && !!navigator.serviceWorker.controller;
-        if (isApiRequest && !isSwControlling) {
+        // Intercept all /api/ requests directly in client-side fetch.
+        // This guarantees that even if the browser holds onto an older cached Service Worker,
+        // all database operations and endpoints succeed reliably and immediately without 404s.
+        if (isApiRequest) {
           const fullUrl = urlString.startsWith('http')
             ? urlString
             : `${window.location.origin}${urlString}`;
@@ -110,6 +110,13 @@ async function initServiceWorker(): Promise<void> {
     });
 
     console.log('[PWA] Service Worker registered successfully at:', swUrl);
+
+    // Force an immediate update check to ensure browser drops outdated SW cache
+    try {
+      await registration.update();
+    } catch {
+      // ignore offline update error
+    }
 
     // If a service worker is updating/installing, tell it to take over
     if (registration.waiting) {
