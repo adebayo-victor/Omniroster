@@ -19,8 +19,11 @@ import {
   ChevronRight,
   ShieldAlert,
   Search,
+  Download,
+  Share2,
 } from 'lucide-react';
 import type { Folder, Employee, FolderType } from '../utils/db';
+import { FolderExportModal } from './FolderExportModal';
 import {
   generateOptimizedRoster,
   DEFAULT_SHIFT_DEFINITIONS,
@@ -59,12 +62,16 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
   const [daysCount, setDaysCount] = useState(7);
   const [maxConsecutiveDays, setMaxConsecutiveDays] = useState(5);
   const [maxShiftsPerStaff, setMaxShiftsPerStaff] = useState(5);
+  const [minRestHours, setMinRestHours] = useState(8);
   const [shiftDefs, setShiftDefs] = useState<ShiftDefinition[]>(DEFAULT_SHIFT_DEFINITIONS);
   const [rosterResult, setRosterResult] = useState<RosterOptimizationResult | null>(null);
   const [optimizing, setOptimizing] = useState(false);
 
   // Schedule Viewer Modal
   const [viewingScheduleFolder, setViewingScheduleFolder] = useState<Folder | null>(null);
+
+  // Folder Export Modal State
+  const [exportingFolder, setExportingFolder] = useState<Folder | null>(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -105,6 +112,7 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
     setDaysCount(7);
     setMaxConsecutiveDays(5);
     setMaxShiftsPerStaff(5);
+    setMinRestHours(8);
     setShiftDefs(DEFAULT_SHIFT_DEFINITIONS);
     setSelectedEmpIds([]);
     setRosterResult(null);
@@ -125,7 +133,14 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
       setDaysCount(folder.rosterConfig.daysCount || 7);
       setMaxConsecutiveDays(folder.rosterConfig.maxConsecutiveDays || 5);
       setMaxShiftsPerStaff(folder.rosterConfig.maxShiftsPerStaff || 5);
+      setMinRestHours(
+        folder.rosterConfig.minRestHours ??
+          folder.rosterConfig.minRestHoursBetweenShifts ??
+          8
+      );
       setShiftDefs(folder.rosterConfig.shiftDefinitions || DEFAULT_SHIFT_DEFINITIONS);
+    } else {
+      setMinRestHours(8);
     }
 
     if (folder.generatedShifts) {
@@ -180,7 +195,7 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
         shiftDefinitions: shiftDefs,
         maxConsecutiveDays: Number(maxConsecutiveDays) || 5,
         maxShiftsPerStaff: Number(maxShiftsPerStaff) || 5,
-        minRestHoursBetweenShifts: 8,
+        minRestHours: Number(minRestHours) || 8,
       });
 
       setRosterResult(result);
@@ -221,6 +236,7 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
         shiftDefinitions: shiftDefs,
         maxConsecutiveDays: Number(maxConsecutiveDays) || 5,
         maxShiftsPerStaff: Number(maxShiftsPerStaff) || 5,
+        minRestHours: Number(minRestHours) || 8,
       });
       finalShifts = res.shifts;
     }
@@ -239,6 +255,7 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
           shiftDefinitions: shiftDefs,
           maxConsecutiveDays: Number(maxConsecutiveDays),
           maxShiftsPerStaff: Number(maxShiftsPerStaff),
+          minRestHours: Number(minRestHours) || 8,
         } : undefined,
         generatedShifts: folderType === 'optimized_roster' ? finalShifts : undefined,
       };
@@ -400,6 +417,13 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
                         </button>
                       )}
                       <button
+                        onClick={() => setExportingFolder(folder)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors cursor-pointer"
+                        title="Export Timetable (Clipboard, PDF, Excel)"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
                         onClick={() => openEditModal(folder)}
                         className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 transition-colors cursor-pointer"
                         title="Edit Folder"
@@ -477,14 +501,34 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
                   </div>
                 </div>
 
-                {isRoster && (
-                  <button
-                    onClick={() => setViewingScheduleFolder(folder)}
-                    className="mt-3 w-full py-1.5 px-3 rounded-lg bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/60 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 text-xs font-semibold flex items-center justify-center gap-1 border border-purple-200 dark:border-purple-800/80 cursor-pointer transition-colors"
-                  >
-                    <span>View CSP Schedule Grid</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                {isRoster ? (
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      onClick={() => setViewingScheduleFolder(folder)}
+                      className="flex-1 py-1.5 px-3 rounded-lg bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/60 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 text-xs font-semibold flex items-center justify-center gap-1 border border-purple-200 dark:border-purple-800/80 cursor-pointer transition-colors"
+                    >
+                      <span>View Grid</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setExportingFolder(folder)}
+                      className="py-1.5 px-3 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                      title="Export Timetable"
+                    >
+                      <Download className="w-3.5 h-3.5 text-blue-500" />
+                      <span>Export</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-3">
+                    <button
+                      onClick={() => setExportingFolder(folder)}
+                      className="w-full py-1.5 px-3 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5 text-blue-500" />
+                      <span>Export Timetable</span>
+                    </button>
+                  </div>
                 )}
               </div>
             );
@@ -635,7 +679,7 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 text-xs">
                     <div>
                       <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
                         Start Date
@@ -686,6 +730,19 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
                         className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white"
                       />
                     </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                        Min Rest (Hours)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={48}
+                        value={minRestHours}
+                        onChange={(e) => setMinRestHours(Number(e.target.value))}
+                        className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white"
+                      />
+                    </div>
                   </div>
 
                   {/* CSP Output Metrics Badge */}
@@ -701,7 +758,7 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
                         </span>
                       </div>
                       <span className="text-[11px] font-mono text-purple-600 dark:text-purple-400">
-                        Rest Period Enforced
+                        {minRestHours}h Rest Period Enforced
                       </span>
                     </div>
                   )}
@@ -800,12 +857,22 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => setViewingScheduleFolder(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setExportingFolder(viewingScheduleFolder)}
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors"
+                  title="Export Roster (Clipboard, PDF, Excel)"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>Export Timetable</span>
+                </button>
+                <button
+                  onClick={() => setViewingScheduleFolder(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <div className="max-h-[60vh] overflow-y-auto space-y-3">
@@ -873,6 +940,14 @@ export const FoldersSection: React.FC<FoldersSectionProps> = ({ onRefreshStats }
           </div>
         </div>
       )}
+
+      {/* FOLDER ROSTER EXPORT MODAL */}
+      <FolderExportModal
+        isOpen={!!exportingFolder}
+        folder={exportingFolder}
+        employees={employees}
+        onClose={() => setExportingFolder(null)}
+      />
     </div>
   );
 };

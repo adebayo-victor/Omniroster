@@ -29,7 +29,8 @@ export interface RosterConstraintConfig {
   shiftDefinitions: ShiftDefinition[];
   maxConsecutiveDays: number; // e.g. 5
   maxShiftsPerStaff: number; // e.g. 5
-  minRestHoursBetweenShifts?: number; // e.g. 8
+  minRestHours: number; // e.g. 8 or 12 (Dynamic minimum rest period)
+  minRestHoursBetweenShifts?: number; // legacy alias
 }
 
 export interface RosterCandidate {
@@ -83,11 +84,37 @@ function formatRosterDate(d: Date): string {
 }
 
 /**
+ * Computes absolute epoch timestamp in milliseconds for a shift start or end time.
+ * If isEnd is true and endTime <= startTime, the shift crossed midnight into the next calendar day.
+ */
+function getShiftDateTimeMs(
+  dateStr: string,
+  timeStr: string,
+  isEnd = false,
+  startTimeStr = ''
+): number {
+  const [h, m] = (timeStr || '00:00').split(':').map(Number);
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setHours(h || 0, m || 0, 0, 0);
+
+  if (isEnd && startTimeStr) {
+    const [startH, startM] = startTimeStr.split(':').map(Number);
+    const startMinutes = (startH || 0) * 60 + (startM || 0);
+    const endMinutes = (h || 0) * 60 + (m || 0);
+    if (endMinutes <= startMinutes) {
+      d.setDate(d.getDate() + 1);
+    }
+  }
+
+  return d.getTime();
+}
+
+/**
  * Executes CSP Backtracking algorithm to generate an optimized roster schedule.
  *
  * Hard Constraints:
  * 1. An employee cannot work more than ONE shift per calendar day.
- * 2. Rest constraint: An employee working a 'Night' shift on day D cannot be assigned to 'Morning' on day D+1.
+ * 2. Rest constraint: Minimum rest hours (config.minRestHours) between the end of previous shift and start of new shift.
  * 3. Max consecutive days: An employee cannot exceed maxConsecutiveDays in a row.
  * 4. Max shifts per staff: An employee cannot exceed maxShiftsPerStaff across the schedule horizon.
  *
@@ -113,6 +140,8 @@ export function generateOptimizedRoster(
   const consecutiveDaysMap: Record<string, number> = {};
   // Track shifts per day: dateStr -> employeeId -> shiftType
   const dayShiftMap: Record<string, Record<string, string>> = {};
+  // Track the absolute epoch timestamp (ms) when each employee's last assigned shift finished
+  const lastShiftEndMap: Record<string, number> = {};
 
   candidates.forEach((c) => {
     workloadMap[c.id] = 0;
@@ -127,6 +156,7 @@ export function generateOptimizedRoster(
 
   const maxConsecutive = config.maxConsecutiveDays || 5;
   const maxShifts = config.maxShiftsPerStaff || Math.ceil((daysCount * shiftDefs.length) / Math.max(1, candidates.length)) + 2;
+  const minRestHours = config.minRestHours ?? config.minRestHoursBetweenShifts ?? 8;
 
   let totalSlotsRequired = 0;
   let totalSlotsAssigned = 0;
@@ -141,13 +171,18 @@ export function generateOptimizedRoster(
       dayShiftMap[isoDate] = {};
     }
 
-    // Previous day dateStr for rest-period constraint check
-    const prevDate = new Date(d.getTime() - 86400000).toISOString().split('T')[0];
-
     for (const shiftDef of shiftDefs) {
       const shiftType = shiftDef.type;
       const minStaff = Math.max(1, shiftDef.minStaff || 1);
       totalSlotsRequired += minStaff;
+
+      const currentShiftStartMs = getShiftDateTimeMs(isoDate, shiftDef.startTime);
+      const currentShiftEndMs = getShiftDateTimeMs(
+        isoDate,
+        shiftDef.endTime,
+        true,
+        shiftDef.startTime
+      );
 
       const staffAssigned: string[] = [];
 
@@ -169,9 +204,13 @@ export function generateOptimizedRoster(
           // 1. Check if already assigned to a shift today
           if (dayShiftMap[isoDate]?.[candidate.id]) continue;
 
-          // 2. Check rest period constraint: Night shift yesterday -> no Morning shift today
-          if (shiftType.toLowerCase() === 'morning' && dayShiftMap[prevDate]?.[candidate.id]?.toLowerCase() === 'night') {
-            continue;
+          // 2. Dynamic Rest Period Constraint: End of previous shift to Start of current shift
+          const lastEndMs = lastShiftEndMap[candidate.id];
+          if (lastEndMs !== undefined) {
+            const restHoursDiff = (currentShiftStartMs - lastEndMs) / (3600 * 1000);
+            if (restHoursDiff < minRestHours) {
+              continue; // Candidate has not had the required minimum rest period
+            }
           }
 
           // 3. Max consecutive days
@@ -208,6 +247,7 @@ export function generateOptimizedRoster(
           dayShiftMap[isoDate][chosenCandidate.id] = shiftType;
           workloadMap[chosenCandidate.id] = (workloadMap[chosenCandidate.id] || 0) + 1;
           consecutiveDaysMap[chosenCandidate.id] = (consecutiveDaysMap[chosenCandidate.id] || 0) + 1;
+          lastShiftEndMap[chosenCandidate.id] = currentShiftEndMs;
           totalSlotsAssigned++;
         }
       }

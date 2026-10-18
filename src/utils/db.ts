@@ -199,6 +199,7 @@ export async function seedInitialDataIfNeeded(): Promise<void> {
       shiftDefinitions: DEFAULT_SHIFT_DEFINITIONS,
       maxConsecutiveDays: 5,
       maxShiftsPerStaff: 5,
+      minRestHours: 8,
     });
 
     const seedFolders: Folder[] = [
@@ -234,6 +235,7 @@ export async function seedInitialDataIfNeeded(): Promise<void> {
           shiftDefinitions: DEFAULT_SHIFT_DEFINITIONS,
           maxConsecutiveDays: 5,
           maxShiftsPerStaff: 5,
+          minRestHours: 8,
           minRestHoursBetweenShifts: 8,
         },
         generatedShifts: rosterResult.shifts,
