@@ -1,15 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { EmployeeHome } from './components/EmployeeHome';
 import { PunchInFlow } from './components/PunchInFlow';
 import { AdminLogin } from './components/AdminLogin';
 import { AdminLayout } from './components/AdminLayout';
 import { LicensingAdminApp } from './components/LicensingAdminApp';
+import { loadFaceApiModels } from './utils/biometrics';
 import type { Folder } from './utils/db';
 
 type AppMode = 'employee_home' | 'punch_in' | 'admin';
 
 export default function App() {
   const isLicensingAdminRoute = window.location.pathname === '/licensing-admin';
+
+  useEffect(() => {
+    // Preload face-api models in the background immediately upon app mount for lightning-fast punch-in responsiveness
+    loadFaceApiModels().catch((err) => {
+      console.warn('[App] Background biometric model preload notice:', err);
+    });
+  }, []);
 
   if (isLicensingAdminRoute) {
     return <LicensingAdminApp />;

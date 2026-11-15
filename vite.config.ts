@@ -62,6 +62,27 @@ export default defineConfig(() => {
         '@': path.resolve('.'),
       },
     },
+    build: {
+      target: 'esnext',
+      minify: 'esbuild',
+      sourcemap: false,
+      chunkSizeWarningLimit: 2000,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('@vladmandic/face-api')) {
+                return 'face-api';
+              }
+              if (id.includes('@react-pdf')) {
+                return 'pdf-renderer';
+              }
+              return 'vendor';
+            }
+          },
+        },
+      },
+    },
     server: {
       port: 3000,
       host: '0.0.0.0',
