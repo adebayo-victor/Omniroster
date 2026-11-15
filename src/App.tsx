@@ -3,11 +3,18 @@ import { EmployeeHome } from './components/EmployeeHome';
 import { PunchInFlow } from './components/PunchInFlow';
 import { AdminLogin } from './components/AdminLogin';
 import { AdminLayout } from './components/AdminLayout';
+import { LicensingAdminApp } from './components/LicensingAdminApp';
 import type { Folder } from './utils/db';
 
 type AppMode = 'employee_home' | 'punch_in' | 'admin';
 
 export default function App() {
+  const isLicensingAdminRoute = window.location.pathname === '/licensing-admin';
+
+  if (isLicensingAdminRoute) {
+    return <LicensingAdminApp />;
+  }
+
   const [mode, setMode] = useState<AppMode>('employee_home');
   const [selectedFolder, setSelectedFolder] = useState<Folder | null>(null);
   const [showAdminLogin, setShowAdminLogin] = useState<boolean>(false);

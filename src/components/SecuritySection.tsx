@@ -234,6 +234,27 @@ export const SecuritySection: React.FC = () => {
           All biometric vectors, PIN credentials, and punch ledgers are stored strictly in the client's local IndexedDB sandbox. No data ever leaves this device.
         </p>
       </div>
+
+      {/* Licensing Control Centre Access Card */}
+      <div className="bg-gradient-to-r from-blue-950/60 to-purple-950/60 p-5 rounded-xl border border-blue-800/80 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="font-bold text-white text-sm flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-blue-400" />
+            OmniRoster Licensing Control Centre
+          </div>
+          <p className="text-xs text-slate-300">
+            Access enterprise licensing administration, installation tracking, and permanent activation key generation at <code className="text-blue-300 font-mono">/licensing-admin</code>.
+          </p>
+        </div>
+        <button
+          onClick={() => {
+            window.open('/licensing-admin', '_blank');
+          }}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-600/25 cursor-pointer transition-all shrink-0"
+        >
+          Open /licensing-admin →
+        </button>
+      </div>
     </div>
   );
 };
